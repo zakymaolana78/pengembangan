@@ -1,79 +1,105 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns # Tambahan untuk grafik yang lebih bagus
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+import seaborn as sns
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.model_selection import train_test_split
 
-# 1. Load Dataset
-df = pd.read_csv('Dataset_Padi_Indonesia_2010_2024.csv')
+# Judul
+st.title("Prediksi Produksi Padi di Sumatera")
+st.markdown("Menggunakan algoritma: **Linear Regression**, **Random Forest**, dan **XGBoost**")
 
-# 2. Preprocessing
-le = LabelEncoder()
-categorical_cols = ['Provinsi', 'Varietas_Padi', 'Pola_Tanam', 'Serangan_Hama']
-for col in categorical_cols:
-    df[col] = le.fit_transform(df[col])
+# Load Data
+df = pd.read_csv("Data_Tanaman_Padi_Sumatera_version_1.csv")
 
-# Menentukan Fitur (X) dan Target (y)
-X = df.drop(['Produksi_Padi_Ton', 'Produktivitas_Ton_per_Ha'], axis=1)
-y = df['Produksi_Padi_Ton']
+# Fitur & Target
+fitur = ['Luas panen', 'Curah hujan', 'Kelembapan', 'Suhu rata-rata']
+target = 'Produksi'
 
-# Split data (80% Training, 20% Testing)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Bagi data latih (Data historis hingga tahun terbaru yang tersedia)
+df_train = df[df['Tahun'] <= 2020]
 
-# Scaling khusus untuk Linear Regression
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+# Split train-validation
+X_train, X_val, y_train, y_val = train_test_split(
+    df_train[fitur], df_train[target], test_size=0.2, random_state=42
+)
 
-# 3. Inisialisasi Model
-models = {
-    "Linear Regression": LinearRegression(),
-    "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
-    "XGBoost": XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+# Latih model
+lr = LinearRegression()
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+xgb = XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+
+lr.fit(X_train, y_train)
+rf.fit(X_train, y_train)
+xgb.fit(X_train, y_train)
+
+# Prediksi data aktual
+df_actual = df.copy()
+df_actual['Prediksi (Linear Regression)'] = lr.predict(df[fitur])
+df_actual['Prediksi (Random Forest)'] = rf.predict(df[fitur])
+df_actual['Prediksi (XGBoost)'] = xgb.predict(df[fitur])
+
+# Tampilkan tabel data historis
+st.subheader("Hasil Prediksi pada Data Historis")
+st.dataframe(df_actual[['Provinsi', 'Tahun', 'Produksi', 'Prediksi (Linear Regression)', 'Prediksi (Random Forest)', 'Prediksi (XGBoost)']])
+
+# --- PROYEKSI MASA DEPAN (Contoh 2025-2030) ---
+def generate_future_data(df_base, start_year, end_year):
+    future_data = []
+    for year in range(start_year, end_year + 1):
+        temp = df_base.copy()
+        temp['Tahun'] = year
+        # Simulasi fluktuasi alamiah
+        temp['Luas panen'] *= np.random.uniform(0.98, 1.03)
+        temp['Curah hujan'] *= np.random.uniform(0.95, 1.05)
+        temp['Kelembapan'] *= np.random.uniform(0.98, 1.02)
+        temp['Suhu rata-rata'] *= np.random.uniform(0.99, 1.01)
+        future_data.append(temp)
+    return pd.concat(future_data, ignore_index=True)
+
+df_last = df[df['Tahun'] == 2020].copy()
+df_future = generate_future_data(df_last, 2025, 2030)
+
+df_future['Prediksi (Linear Regression)'] = lr.predict(df_future[fitur])
+df_future['Prediksi (Random Forest)'] = rf.predict(df_future[fitur])
+df_future['Prediksi (XGBoost)'] = xgb.predict(df_future[fitur])
+
+st.subheader("Proyeksi Produksi Padi Tahun 2025–2030")
+st.dataframe(df_future[['Provinsi', 'Tahun', 'Prediksi (Linear Regression)', 'Prediksi (Random Forest)', 'Prediksi (XGBoost)']])
+
+# --- VISUALISASI ---
+st.subheader("Visualisasi Perbandingan Prediksi Model")
+tahun_terpilih = st.selectbox("Pilih Tahun untuk Detail Provinsi", sorted(df_future['Tahun'].unique()))
+df_tampil = df_future[df_future['Tahun'] == tahun_terpilih]
+
+fig, ax = plt.subplots(figsize=(12, 6))
+x = np.arange(len(df_tampil))
+width = 0.25
+
+ax.bar(x - width, df_tampil['Prediksi (Linear Regression)'], width, label='Linear Regression', color='skyblue')
+ax.bar(x, df_tampil['Prediksi (Random Forest)'], width, label='Random Forest', color='orange')
+ax.bar(x + width, df_tampil['Prediksi (XGBoost)'], width, label='XGBoost', color='lightgreen')
+
+ax.set_xticks(x)
+ax.set_xticklabels(df_tampil['Provinsi'], rotation=45)
+ax.set_ylabel("Produksi (Ton)")
+ax.set_title(f"Perbandingan Model Tahun {tahun_terpilih}")
+ax.legend()
+st.pyplot(fig)
+
+# --- EVALUASI ---
+st.subheader("Evaluasi Performa Model (Data Validasi)")
+y_pred_lr = lr.predict(X_val)
+y_pred_rf = rf.predict(X_val)
+y_pred_xgb = xgb.predict(X_val)
+
+eval_results = {
+    'Model': ['Linear Regression', 'Random Forest', 'XGBoost'],
+    'R² Score': [r2_score(y_val, y_pred_lr), r2_score(y_val, y_pred_rf), r2_score(y_val, y_pred_xgb)],
+    'MAE': [mean_absolute_error(y_val, y_pred_lr), mean_absolute_error(y_val, y_pred_rf), mean_absolute_error(y_val, y_pred_xgb)]
 }
-
-# 4. Training dan Evaluasi
-print("--- Hasil Evaluasi Model ---")
-for name, model in models.items():
-    if name == "Linear Regression":
-        model.fit(X_train_scaled, y_train)
-        y_pred = model.predict(X_test_scaled)
-    else:
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-    
-    mae = mean_absolute_error(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    r2 = r2_score(y_test, y_pred)
-    
-    print(f"\nModel: {name}")
-    print(f"MAE      : {mae:.2f}")
-    print(f"RMSE     : {rmse:.2f}")
-    print(f"R2 Score : {r2:.4f}")
-
-# 5. Visualisasi Fitur Paling Berpengaruh (Feature Importance)
-rf_model = models["Random Forest"]
-importances = rf_model.feature_importances_
-feature_names = X.columns
-feature_importance_df = pd.DataFrame({'Fitur': feature_names, 'Importance': importances}).sort_values(by='Importance', ascending=False)
-
-# Membuat Grafik
-plt.figure(figsize=(10, 6))
-sns.barplot(x='Importance', y='Fitur', data=feature_importance_df, palette='viridis')
-plt.title('Fitur yang Paling Mempengaruhi Produksi Padi (Random Forest)')
-plt.xlabel('Tingkat Kepentingan')
-plt.ylabel('Nama Fitur')
-plt.tight_layout()
-
-# PENTING: Simpan grafik menjadi file gambar agar bisa dilihat di GitHub
-plt.savefig('grafik_feature_importance.png')
-print("\n[INFO] Grafik telah disimpan dengan nama: grafik_feature_importance.png")
-
-# Menampilkan tabel di terminal
-print("\n--- Tabel Fitur Paling Berpengaruh ---")
-print(feature_importance_df)
+st.table(pd.DataFrame(eval_results))
